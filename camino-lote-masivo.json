@@ -1,0 +1,57 @@
+{
+  "dni_input": {
+    "x": 383,
+    "y": 218
+  },
+  "select_all": {
+    "action": "ctrl+a"
+  },
+  "clear_input": {
+    "action": "backspace"
+  },
+  "write_dni": {
+    "action": "type_dni"
+  },
+  "search": {
+    "action": "enter"
+  },
+  "first_result": {
+    "x": 506,
+    "y": 234
+  },
+  "right_click_address": {
+    "x": 70,
+    "y": 332,
+    "button": "right"
+  },
+  "select_all_menu": {
+    "x": 151,
+    "y": 491
+  },
+  "right_click_copy": {
+    "x": 70,
+    "y": 332,
+    "button": "right"
+  },
+  "copy_menu": {
+    "x": 114,
+    "y": 417
+  },
+  "close_btn": {
+    "x": 1898,
+    "y": 132
+  },
+  "steps": [
+    "dni_input",
+    "select_all",
+    "clear_input",
+    "write_dni",
+    "search",
+    "first_result",
+    "right_click_address",
+    "select_all_menu",
+    "right_click_copy",
+    "copy_menu",
+    "close_btn"
+  ]
+}
