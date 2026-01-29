@@ -16,8 +16,12 @@
     "action": "enter"
   },
   "first_result": {
-    "x": 506,
-    "y": 234
+    "x": 487,
+    "y": 238
+  },
+  "copy_name_menu": {
+    "x": 504,
+    "y": 250
   },
   "right_click_address": {
     "x": 70,
@@ -41,17 +45,39 @@
     "x": 1898,
     "y": 132
   },
+  "popup_right_click": {
+    "x": 261,
+    "y": 156
+  },
+  "popup_copy_menu": {
+    "x": 274,
+    "y": 164
+  },
+  "reconnect_click": {
+    "x": 961,
+    "y": 548
+  },
+  "btn_house": {
+    "x": 949,
+    "y": 112
+  },
   "steps": [
     "dni_input",
     "select_all",
     "clear_input",
     "write_dni",
     "search",
-    "first_result",
+    "first_result (right click)",
+    "copy_name_menu",
+    "validate_name",
+    "first_result (left click)",
     "right_click_address",
     "select_all_menu",
     "right_click_copy",
     "copy_menu",
-    "close_btn"
+    "check_direccion",
+    "if error: reconnect_click + enter, retry copy",
+    "close_btn",
+    "if 3+ no creado & VPN OK: verify popup, if blocked: 4x close_btn + recovery_click"
   ]
 }
