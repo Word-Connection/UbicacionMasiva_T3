@@ -82,6 +82,13 @@ VPN_LOG_FILE_PREFIX = "vpn_log"
 SCRAPING_LOG_PREFIX = "scraping"
 FILE_TIMESTAMP_FORMAT = "%Y%m%d_%H%M%S"
 
+# Columnas del CSV de entrada (en orden)
+CSV_INPUT_COLUMNS = [
+    'Nombre del Cliente', 'DNI', 'ANI1', 'Linea1', 'Linea2',
+    'PlanActual', 'OperadorActual', 'Domicilio', 'CP', 'Localidad',
+    'email', 'Provincia', 'BBDD', 'Generico'
+]
+
 # ============================================================================
 # CONFIGURACIÓN INICIAL
 # ============================================================================
@@ -729,10 +736,10 @@ def type_text(text: str, delay: float = DELAY_CLICK) -> None:
 
 
 def load_progress(progress_file: Path) -> set:
-    """Carga los DNIs ya procesados.
+    """Carga los DNIs ya procesados desde archivo CSV.
 
     Args:
-        progress_file: Path al archivo de progreso
+        progress_file: Path al archivo de progreso (CSV)
 
     Returns:
         Set de DNIs ya procesados
@@ -742,25 +749,42 @@ def load_progress(progress_file: Path) -> set:
 
     processed = set()
     with progress_file.open('r', encoding='utf-8') as f:
-        for line in f:
-            dni = line.strip().split('\t')[0]
+        reader = csv.DictReader(f, delimiter=';')
+        for row in reader:
+            dni = row.get('DNI', '').strip()
             if dni:
                 processed.add(dni)
     return processed
 
 
-def save_result(results_file: Path, dni: str, direccion: str) -> None:
-    """Guarda un resultado exitoso.
+def save_result(
+    results_file: Path,
+    row_data: dict,
+    ubicacion: str,
+    fieldnames: List[str],
+    write_header: bool = False
+) -> None:
+    """Guarda un resultado exitoso en formato CSV con todas las columnas.
 
     Args:
-        results_file: Path al archivo de resultados
-        dni: DNI procesado
-        direccion: Dirección obtenida
+        results_file: Path al archivo de resultados (CSV)
+        row_data: Diccionario con todos los datos del registro original
+        ubicacion: Ubicación/dirección obtenida del scraping
+        fieldnames: Lista de nombres de columnas para el CSV
+        write_header: Si True, escribe el header (solo para el primer registro)
     """
-    with results_file.open('a', encoding='utf-8') as f:
-        # Limpiar la direccion de saltos de linea
-        direccion_clean = direccion.replace('\n', ' ').replace('\r', ' ').strip()
-        f.write(f"{dni}\t{direccion_clean}\n")
+    # Limpiar la ubicación de saltos de línea
+    ubicacion_clean = ubicacion.replace('\n', ' ').replace('\r', ' ').strip()
+
+    # Crear copia del registro y agregar la ubicación
+    output_row = {col: row_data.get(col, '') for col in fieldnames if col != 'Ubicacion'}
+    output_row['Ubicacion'] = ubicacion_clean
+
+    with results_file.open('a', encoding='utf-8', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter=';', extrasaction='ignore')
+        if write_header:
+            writer.writeheader()
+        writer.writerow(output_row)
 
 
 def save_failure(failures_file: Path, dni: str, reason: str) -> None:
@@ -907,26 +931,35 @@ def copy_address_with_retry(coords: dict) -> Optional[str]:
 
 
 def process_dni(
-    dni: str,
-    nombre_csv: str,
+    row_data: dict,
+    dni_col: str,
+    nombre_col: str,
     coords: dict,
     results_file: Path,
-    failures_file: Path
+    failures_file: Path,
+    fieldnames: List[str],
+    write_header: bool = False
 ) -> str:
     """Procesa un DNI individual.
 
     Args:
-        dni: DNI a procesar
-        nombre_csv: Nombre esperado del CSV
+        row_data: Diccionario con todos los datos del registro
+        dni_col: Nombre de la columna DNI
+        nombre_col: Nombre de la columna de nombre
         coords: Diccionario con coordenadas
         results_file: Path al archivo de resultados
         failures_file: Path al archivo de fallos
+        fieldnames: Lista de nombres de columnas para el CSV de salida
+        write_header: Si True, escribe el header (solo para el primer registro)
 
     Returns:
         'ok': Procesado exitosamente
         'vpn_issue': Problema de VPN detectado
         'error': Error general
     """
+    dni = row_data.get(dni_col, '').strip()
+    nombre_csv = row_data.get(nombre_col, '').strip()
+
     logger.info(f"{'='*50}")
     logger.info(f"Procesando DNI: {dni} - Nombre esperado: {nombre_csv}")
     logger.info(f"{'='*50}")
@@ -960,7 +993,7 @@ def process_dni(
 
         if direccion:
             logger.info(f"Direccion copiada: {direccion[:100]}...")
-            save_result(results_file, dni, direccion)
+            save_result(results_file, row_data, direccion, fieldnames, write_header)
         else:
             save_failure(failures_file, dni, "Sin direccion copiada - fallo tras reintento")
 
@@ -1020,7 +1053,7 @@ def run(
     setup_pyautogui(DELAY_CLICK)
 
     # Archivos de salida
-    results_file = output_dir / f'{RESULTS_FILE_PREFIX}_{timestamp}.tsv'
+    results_file = output_dir / f'{RESULTS_FILE_PREFIX}_{timestamp}.csv'
     failures_file = output_dir / f'{FAILURES_FILE_PREFIX}_{timestamp}.tsv'
     vpn_log_file = output_dir / f'{VPN_LOG_FILE_PREFIX}_{timestamp}.txt'
 
@@ -1045,7 +1078,7 @@ def run(
         logger.error(f"No existe el archivo CSV: {csv_path}")
         sys.exit(1)
 
-    registros = []  # Lista de tuplas (dni, nombre_cliente)
+    registros = []  # Lista de diccionarios con todos los datos del registro
     with csv_path.open('r', encoding='utf-8', errors='ignore') as f:
         # Detectar delimitador
         sample = f.read(2048)
@@ -1053,12 +1086,13 @@ def run(
         delimiter = ';' if sample.count(';') > sample.count(',') else ','
 
         reader = csv.DictReader(f, delimiter=delimiter)
+        input_fieldnames = reader.fieldnames or []
 
         # Buscar columna de DNI (puede llamarse DNI, dni, Dni, documento, etc.)
         dni_col = None
         nombre_col = None
-        if reader.fieldnames:
-            for col in reader.fieldnames:
+        if input_fieldnames:
+            for col in input_fieldnames:
                 col_lower = col.lower()
                 if col_lower in ['dni', 'documento', 'doc', 'nro_documento']:
                     dni_col = col
@@ -1067,12 +1101,12 @@ def run(
 
         if not dni_col:
             logger.error("No se encontro columna de DNI en el CSV")
-            logger.error(f"Columnas disponibles: {reader.fieldnames}")
+            logger.error(f"Columnas disponibles: {input_fieldnames}")
             sys.exit(1)
 
         if not nombre_col:
             logger.error("No se encontro columna de nombre en el CSV")
-            logger.error(f"Columnas disponibles: {reader.fieldnames}")
+            logger.error(f"Columnas disponibles: {input_fieldnames}")
             sys.exit(1)
 
         logger.info(f"Usando columna DNI: {dni_col}")
@@ -1080,9 +1114,11 @@ def run(
 
         for row in reader:
             dni = row.get(dni_col, '').strip()
-            nombre = row.get(nombre_col, '').strip()
             if dni and dni not in processed:
-                registros.append((dni, nombre))
+                registros.append(row)
+
+    # Fieldnames para el archivo de salida (columnas originales + Ubicacion)
+    output_fieldnames = list(input_fieldnames) + ['Ubicacion']
 
     total = len(registros)
     logger.info(f"Total DNIs a procesar: {total}")
@@ -1100,47 +1136,62 @@ def run(
     exitosos = 0
     fallidos = 0
     consecutive_failures = 0  # Contador de fallos consecutivos (vpn_issue o error)
-    failed_dnis = []  # DNIs que fallaron consecutivamente
+    failed_rows = []  # Registros que fallaron consecutivamente
 
     # Tracking de eventos VPN
     vpn_events = []  # Lista de eventos de caida de VPN
     total_retries = 0
     total_retries_exitosos = 0
 
+    # Control de header CSV (solo escribir una vez)
+    header_written = results_file.exists() and results_file.stat().st_size > 0
+
     i = 0
     while i < len(registros):
-        dni, nombre_csv = registros[i]
+        row_data = registros[i]
+        dni = row_data.get(dni_col, '').strip()
         logger.info(f"[{i+1}/{total}] ({exitosos} exitosos, {fallidos} fallidos)")
 
-        result = process_dni(dni, nombre_csv, coords, results_file, failures_file)
+        # Determinar si escribir header (solo si archivo vacío/nuevo)
+        write_header = not header_written
+
+        result = process_dni(
+            row_data, dni_col, nombre_col, coords,
+            results_file, failures_file, output_fieldnames, write_header
+        )
+
+        # Si fue exitoso, marcar que el header ya fue escrito
+        if result == "ok" and not header_written:
+            header_written = True
 
         if result == "ok":
             exitosos += 1
             consecutive_failures = 0
-            failed_dnis = []
+            failed_rows = []
         elif result == "vpn_issue" or result == "error":
             # Cualquier fallo (sin nombre o nombre no coincide) cuenta
             fallidos += 1
             consecutive_failures += 1
-            failed_dnis.append((dni, nombre_csv))
+            failed_rows.append(row_data)
 
             # Si hay 3+ fallos consecutivos, verificar si es problema de sistema
             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                failed_dnis_list = [r.get(dni_col, '') for r in failed_rows]
                 logger.warning("*" * 60)
                 logger.warning("DETENCION POR FALLOS CONSECUTIVOS")
                 logger.warning("*" * 60)
                 logger.warning(f"Detectados {consecutive_failures} fallos consecutivos")
-                logger.warning(f"DNIs afectados: {[d[0] for d in failed_dnis]}")
+                logger.warning(f"DNIs afectados: {failed_dnis_list}")
                 logger.info("Verificando conectividad y estado del sistema...")
 
                 # Log del evento
                 with vpn_log_file.open('a', encoding='utf-8') as f:
-                    f.write(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {consecutive_failures} fallos consecutivos - DNIs: {', '.join([d[0] for d in failed_dnis])}\n")
+                    f.write(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {consecutive_failures} fallos consecutivos - DNIs: {', '.join(failed_dnis_list)}\n")
 
                 if not check_vpn():
                     # VPN caida - esperar reconexion (el scraping se detiene aqui)
                     vpn_event = wait_for_vpn(vpn_log_file)
-                    vpn_event['dnis_afectados'] = [d[0] for d in failed_dnis]
+                    vpn_event['dnis_afectados'] = failed_dnis_list
                     vpn_events.append(vpn_event)
 
                     # Click de reconexion y Enter para activar el sistema
@@ -1151,25 +1202,31 @@ def run(
 
                     # Reintentar los DNIs que fallaron por VPN
                     logger.info("=" * 60)
-                    logger.info(f"REINTENTANDO {len(failed_dnis)} DNIs QUE FALLARON POR VPN")
+                    logger.info(f"REINTENTANDO {len(failed_rows)} DNIs QUE FALLARON POR VPN")
                     logger.info("=" * 60)
 
                     # Log inicio de reintentos
                     with vpn_log_file.open('a', encoding='utf-8') as f:
                         f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
-                               f"Reintentos iniciados - Total: {len(failed_dnis)}\n")
+                               f"Reintentos iniciados - Total: {len(failed_rows)}\n")
 
                     retries_ok = 0
                     retries_fail = 0
-                    for j, (retry_dni, retry_nombre) in enumerate(failed_dnis, 1):
-                        logger.info(f"[REINTENTO {j}/{len(failed_dnis)}] DNI: {retry_dni}")
-                        retry_result = process_dni(retry_dni, retry_nombre, coords, results_file, failures_file)
+                    for j, retry_row in enumerate(failed_rows, 1):
+                        retry_dni = retry_row.get(dni_col, '').strip()
+                        logger.info(f"[REINTENTO {j}/{len(failed_rows)}] DNI: {retry_dni}")
+                        retry_result = process_dni(
+                            retry_row, dni_col, nombre_col, coords,
+                            results_file, failures_file, output_fieldnames, not header_written
+                        )
                         total_retries += 1
                         if retry_result == "ok":
                             retries_ok += 1
                             total_retries_exitosos += 1
                             exitosos += 1
                             fallidos -= 1  # Descontar el fallo anterior
+                            if not header_written:
+                                header_written = True
                             logger.info(f"  -> EXITO en reintento")
                             # Log reintento exitoso
                             with vpn_log_file.open('a', encoding='utf-8') as f:
@@ -1195,7 +1252,7 @@ def run(
 
                     # Reiniciar contadores
                     consecutive_failures = 0
-                    failed_dnis = []
+                    failed_rows = []
                 else:
                     # VPN esta bien, puede ser otro problema (popup, error del sistema, etc)
                     logger.info("VPN activa (ping OK) - detectando otro problema...")
@@ -1212,11 +1269,11 @@ def run(
                         logger.debug("Popup verificado OK - sin bloqueos detectados")
 
                     consecutive_failures = 0
-                    failed_dnis = []
+                    failed_rows = []
         else:  # error
             fallidos += 1
             consecutive_failures = 0
-            failed_dnis = []
+            failed_rows = []
 
         i += 1
         # Pequena pausa entre DNIs
